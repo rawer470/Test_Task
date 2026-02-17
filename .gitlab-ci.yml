@@ -1,0 +1,63 @@
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  POSTGRES_DB: test_db
+  POSTGRES_USER: test_user
+  POSTGRES_PASSWORD: test_password
+  DB_ENGINE: django.db.backends.postgresql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DJANGO_SECRET_KEY: test-secret-key-for-ci
+  DJANGO_DEBUG: "True"
+
+test:
+  stage: test
+  image: python:3.11-slim
+  services:
+    - postgres:15
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    - python manage.py migrate
+    - python manage.py test --verbosity=2
+    - python manage.py check --deploy --fail-level WARNING
+  coverage: '/TOTAL.*\s+(\d+%)$/'
+
+lint:
+  stage: test
+  image: python:3.11-slim
+  before_script:
+    - pip install flake8
+  script:
+    - flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+    - flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+  allow_failure: true
+
+docker-build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - docker build -t blog-api:$CI_COMMIT_SHORT_SHA .
+    - docker tag blog-api:$CI_COMMIT_SHORT_SHA blog-api:latest
+  only:
+    - main
+    - develop
+
+docker-test:
+  stage: test
+  image: docker/compose:latest
+  services:
+    - docker:dind
+  script:
+    - docker-compose up -d
+    - sleep 10
+    - docker-compose exec -T web python manage.py test
+    - docker-compose down
+  only:
+    - main
+    - develop
